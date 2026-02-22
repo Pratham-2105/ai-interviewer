@@ -77,10 +77,6 @@ Contributions are welcome! Feel free to:
 - Suggest new features
 - Submit pull requests
 
-## License
-
-[Add your license here - e.g., MIT, Apache 2.0, etc.]
-
 ## Author
 
 **Pratham-2105**

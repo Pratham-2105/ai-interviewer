@@ -1,21 +1,11 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict
 from gemini_backend import generate_response
 import uuid
 import json
-import re
 
 app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # -----------------------------
 # In-memory session storage
@@ -81,11 +71,6 @@ Return your evaluation STRICTLY in this JSON format:
   "strengths": "string",
   "weaknesses": "string"
 }}
-
-Rules:
-- Return ONLY valid JSON.
-- Do not include markdown/code fences.
-- Do not include any text before or after JSON.
 """
 
 def build_final_prompt(session):
@@ -111,82 +96,6 @@ def calculate_average_score(score_history):
     if not score_history:
         return 0
     return round(sum(score_history) / len(score_history), 2)
-
-def parse_feedback(raw_feedback: str):
-    text = (raw_feedback or "").strip()
-
-    # Direct JSON parse first.
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            return normalize_feedback(parsed)
-    except Exception:
-        pass
-
-    # Handle markdown fenced blocks and mixed output by extracting the first JSON object.
-    fenced = re.search(r"```(?:json)?\s*({[\s\S]*?})\s*```", text, re.IGNORECASE)
-    if fenced:
-        try:
-            parsed = json.loads(fenced.group(1))
-            if isinstance(parsed, dict):
-                return normalize_feedback(parsed)
-        except Exception:
-            pass
-
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        try:
-            parsed = json.loads(text[start:end + 1])
-            if isinstance(parsed, dict):
-                return normalize_feedback(parsed)
-        except Exception:
-            pass
-
-    return None
-
-def clamp_score(value):
-    try:
-        n = int(value)
-    except Exception:
-        return 0
-    return max(1, min(10, n))
-
-def normalize_feedback(payload: dict):
-    required_text_fields = ["strengths", "weaknesses"]
-    for key in required_text_fields:
-        if key not in payload:
-            payload[key] = ""
-
-    communication_score = clamp_score(payload.get("communication_score", 0))
-    technical_score = clamp_score(payload.get("technical_score", 0))
-    confidence_score = clamp_score(payload.get("confidence_score", 0))
-    score = clamp_score(payload.get("score", 0))
-
-    if score == 0:
-        sub_scores = [v for v in [communication_score, technical_score, confidence_score] if v > 0]
-        if sub_scores:
-            score = round(sum(sub_scores) / len(sub_scores))
-
-    normalized = {
-        "score": score,
-        "communication_score": communication_score,
-        "technical_score": technical_score,
-        "confidence_score": confidence_score,
-        "strengths": str(payload.get("strengths", "")),
-        "weaknesses": str(payload.get("weaknesses", "")),
-    }
-
-    # If all scores are missing/invalid, treat this as a parse failure.
-    score_values = [
-        normalized["score"],
-        normalized["communication_score"],
-        normalized["technical_score"],
-        normalized["confidence_score"],
-    ]
-    if all(v == 0 for v in score_values):
-        return None
-    return normalized
 
 # -----------------------------
 # Root
@@ -241,8 +150,10 @@ def submit_answer(data: AnswerRequest):
 
     eval_prompt = build_evaluation_prompt(session, question, data.answer)
     raw_feedback = generate_response(eval_prompt)
-    feedback_json = parse_feedback(raw_feedback)
-    if feedback_json is None:
+
+    try:
+        feedback_json = json.loads(raw_feedback)
+    except:
         return {
             "error": "Failed to parse AI response",
             "raw_response": raw_feedback

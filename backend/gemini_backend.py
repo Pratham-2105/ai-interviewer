@@ -1,5 +1,5 @@
 import requests
-import backend.config as config
+import config as config
 
 API_KEY = config.GEMINI_API_KEY
 

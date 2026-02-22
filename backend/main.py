@@ -1,5 +1,5 @@
 import streamlit as st
-from backend.gemini_backend import generate_response
+from gemini_backend import generate_response
 
 
 # ------------------------

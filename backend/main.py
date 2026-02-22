@@ -1,276 +1,181 @@
-import streamlit as st
+from fastapi import FastAPI
+from pydantic import BaseModel
+from typing import Dict
 from gemini_backend import generate_response
+import uuid
+
+app = FastAPI()
 
 
-# ------------------------
-# SESSION STATE
-# ------------------------
+# -----------------------------
+# In-memory session storage
+# -----------------------------
 
-if "started" not in st.session_state:
-    st.session_state.started = False
-
-if "question" not in st.session_state:
-    st.session_state.question = ""
-
-if "round" not in st.session_state:
-    st.session_state.round = 1
-
-if "history" not in st.session_state:
-    st.session_state.history = []
-
-if "difficulty" not in st.session_state:
-    st.session_state.difficulty = 1
+sessions: Dict[str, dict] = {}
 
 
-# ------------------------
-# UI HEADER
-# ------------------------
+# -----------------------------
+# Models
+# -----------------------------
 
-st.title("🌍 Universal AI Interview Platform")
-
-
-# ------------------------
-# USER INPUT OPTIONS
-# ------------------------
-
-field = st.selectbox(
-
-    "Select Interview Field",
-
-    [
-
-        "Software Engineering",
-
-        "Data Science",
-
-        "Machine Learning",
-
-        "Product Management",
-
-        "Marketing",
-
-        "Finance",
-
-        "Consulting",
-
-        "Human Resources",
-
-        "Sales",
-
-        "Custom"
-
-    ]
-
-)
+class StartInterviewRequest(BaseModel):
+    field: str
+    interview_type: str
+    difficulty: int
+    total_rounds: int
+    resume: str = ""
+    job_description: str = ""
 
 
-if field == "Custom":
-
-    field = st.text_input("Enter Custom Field")
-
-
-total_rounds = st.slider(
-
-    "Number of Rounds",
-
-    1,
-
-    10,
-
-    3
-
-)
+class AnswerRequest(BaseModel):
+    session_id: str
+    answer: str
 
 
-base_difficulty = st.slider(
+# -----------------------------
+# Root
+# -----------------------------
 
-    "Starting Difficulty",
-
-    1,
-
-    10,
-
-    3
-
-)
+@app.get("/")
+def root():
+    return {"message": "AI Interview Backend Running"}
 
 
-# ------------------------
-# START BUTTON
-# ------------------------
+# -----------------------------
+# Start Interview
+# -----------------------------
 
-if st.button("Start Interview"):
+@app.post("/start-interview")
+def start_interview(data: StartInterviewRequest):
 
-    st.session_state.started = True
+    session_id = str(uuid.uuid4())
 
-    st.session_state.round = 1
+    sessions[session_id] = {
+        "field": data.field,
+        "interview_type": data.interview_type,
+        "difficulty": data.difficulty,
+        "total_rounds": data.total_rounds,
+        "current_round": 1,
+        "resume": data.resume,
+        "job_description": data.job_description,
+        "history": []
+    }
 
-    st.session_state.history = []
+    question_prompt = f"""
+You are conducting a {data.interview_type} interview.
 
-    st.session_state.difficulty = base_difficulty
+Field: {data.field}
 
+Difficulty Level: {data.difficulty}/10
 
-    prompt = f"""
+Resume:
+{data.resume}
 
-You are a professional interviewer.
+Job Description:
+{data.job_description}
 
-Field: {field}
-
-Difficulty Level: {st.session_state.difficulty}/10
-
-Ask interview question.
-
+Ask first interview question.
 """
 
-    st.session_state.question = generate_response(prompt)
+    question = generate_response(question_prompt)
 
-# ------------------------
-# SESSION STATE ADDITIONS
-# ------------------------
+    sessions[session_id]["current_question"] = question
 
-if "show_feedback" not in st.session_state:
-    st.session_state.show_feedback = False
-
-if "interview_complete" not in st.session_state:
-    st.session_state.interview_complete = False
+    return {
+        "session_id": session_id,
+        "question": question
+    }
 
 
-# ------------------------
-# INTERVIEW LOOP
-# ------------------------
+# -----------------------------
+# Submit Answer & Get Next
+# -----------------------------
 
-if st.session_state.started and not st.session_state.interview_complete:
+@app.post("/submit-answer")
+def submit_answer(data: AnswerRequest):
 
-    st.write(f"## Round {st.session_state.round} / {total_rounds}")
+    session = sessions.get(data.session_id)
 
-    st.write(f"Difficulty: {st.session_state.difficulty}/10")
+    if not session:
+        return {"error": "Invalid session ID"}
 
-    st.write("### Question:")
-    st.write(st.session_state.question)
+    question = session["current_question"]
 
-
-    # Only show answer box if feedback not shown yet
-    if not st.session_state.show_feedback:
-
-        answer = st.text_area("Your Answer", key=f"answer_{st.session_state.round}")
-
-
-        if st.button("Submit Answer"):
-
-            st.session_state.current_answer = answer
-
-            eval_prompt = f"""
-Field: {field}
-Difficulty: {st.session_state.difficulty}
+    eval_prompt = f"""
+Field: {session['field']}
+Interview Type: {session['interview_type']}
+Difficulty: {session['difficulty']}/10
 
 Question:
-{st.session_state.question}
+{question}
 
-Answer:
-{answer}
+Candidate Answer:
+{data.answer}
 
 Evaluate answer.
-Give score, strengths, weaknesses.
+
+Give:
+Score /10
+Strength
+Weakness
 """
 
-            st.session_state.feedback = generate_response(eval_prompt)
+    feedback = generate_response(eval_prompt)
 
-            st.session_state.show_feedback = True
+    session["history"].append({
+        "question": question,
+        "answer": data.answer,
+        "feedback": feedback
+    })
 
-            st.rerun()
+    # Increase difficulty slightly
+    difficulty_step = max(1, int(10 / session["total_rounds"]))
+    session["difficulty"] = min(10, session["difficulty"] + difficulty_step)
 
+    session["current_round"] += 1
 
-    # Show feedback
-    if st.session_state.show_feedback:
+    if session["current_round"] > session["total_rounds"]:
 
-        st.write("## Feedback")
-        st.write(st.session_state.feedback)
+        final_prompt = f"""
+Field: {session['field']}
 
+Interview History:
+{session['history']}
 
-        # Save history
-        st.session_state.history.append({
+Generate final report:
 
-            "question": st.session_state.question,
-
-            "answer": st.session_state.current_answer,
-
-            "difficulty": st.session_state.difficulty
-
-        })
-
-
-        # NEXT ROUND BUTTON
-        if st.button("Next Round"):
-
-
-            # Increase difficulty gradually
-            difficulty_step = max(1, int(10 / total_rounds))
-
-            st.session_state.difficulty = min(
-                10,
-                st.session_state.difficulty + difficulty_step
-            )
-
-
-            st.session_state.round += 1
-
-
-            # Check interview finished
-            if st.session_state.round > total_rounds:
-
-                st.session_state.interview_complete = True
-
-                st.rerun()
-
-
-            # Generate harder question
-            next_prompt = f"""
-You are a professional interviewer.
-
-Field: {field}
-
-Difficulty: {st.session_state.difficulty}/10
-
-Ask a more challenging and deeper question than previous round.
-
-"""
-
-            st.session_state.question = generate_response(next_prompt)
-
-
-            st.session_state.show_feedback = False
-
-            st.rerun()
-
-
-# ------------------------
-# FINAL REPORT
-# ------------------------
-
-if st.session_state.interview_complete:
-
-    st.write("# Interview Complete")
-
-
-    report_prompt = f"""
-Field: {field}
-
-Interview history:
-
-{st.session_state.history}
-
-Generate final interview report.
-
-Include:
-
-Overall score
+Overall Score
 Strengths
 Weaknesses
-Final hiring decision
+Hiring Recommendation
 """
 
-    report = generate_response(report_prompt)
+        final_report = generate_response(final_prompt)
 
-    st.write(report)
+        return {
+            "feedback": feedback,
+            "interview_complete": True,
+            "final_report": final_report
+        }
 
-    st.session_state.started = False
+    # Generate next harder question
+    next_question_prompt = f"""
+You are conducting a {session['interview_type']} interview.
+
+Field: {session['field']}
+
+Difficulty Level: {session['difficulty']}/10
+
+Ask a more complex and deeper question than previous round.
+"""
+
+    next_question = generate_response(next_question_prompt)
+
+    session["current_question"] = next_question
+
+    return {
+        "feedback": feedback,
+        "interview_complete": False,
+        "next_question": next_question,
+        "current_round": session["current_round"]
+    }

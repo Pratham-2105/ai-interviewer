@@ -171,6 +171,9 @@ GET /session-summary/{session_id}
 ## Author
 
 Pratham Srivastava
+Pranjal Prateek
+Pooja Tripathi
+Abhinav Thakur
 
 ---
 
